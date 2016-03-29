@@ -270,12 +270,12 @@ def main():
 
     # parameters
     K = 30 #int(sys.argv[2])
-    N = 1 #int(sys.argv[3])
+    N = 10 #int(sys.argv[3])
     eta = 0.001
     eta_decay = 0.99
     PARTITION_NUM = 2 * 4 * 2
 
-    fileName = 'ratings_1M.csv' #sys.argv[1]
+    fileName = 'ratings_10M.csv' #sys.argv[1]
     f = sc.textFile('hdfs:///input/%s' % fileName, PARTITION_NUM)
     
     max_block_id = (f
