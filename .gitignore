@@ -62,5 +62,5 @@ target/
 .ipynb_checkpoints
 
 # no temp files
-.swp
-.swo
+*.swp
+*.swo
