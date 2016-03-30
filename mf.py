@@ -204,7 +204,7 @@ def sdg_compute(target_value, total_list):
     )
     return error, total_list
 
-#def main():
+def main():
     '''
     Launch guide:
 
@@ -281,3 +281,4 @@ def sdg_compute(target_value, total_list):
         print (i, int(t2 - t1), e[1][0], np.sqrt(e[1][0]/ e[1][1]))
         print '*' * 100
 
+main()
