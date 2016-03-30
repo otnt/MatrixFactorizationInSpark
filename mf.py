@@ -167,7 +167,6 @@ def sdg_merge(line1, line2):
     return result1+result2
 
 def sdg_compute(target_value, total_list):
-#def sdg_compute(total_list):
     '''
     Use SDG algorithm to compute and update matrix to be factorized.
     It pairs target matrix and matrix to be factorized, to matching them using block_id.
@@ -185,7 +184,6 @@ def sdg_compute(target_value, total_list):
     '''
 
     # e.g. (0, (<pyspark.resultiterable.ResultIterable object at 0x7fb0d6d00610>, <pyspark.resultiterable.ResultIterable object at 0x7fb0d6d00b10>))
-    #target_value = target_value_bc.value
     block_id_total = target_value.cogroup(total_list).persist() 
     # e.g. (0, (856589.5871305099, 1000209))
     error = (
@@ -210,63 +208,11 @@ def sdg_compute(target_value, total_list):
     '''
     Launch guide:
 
-    On AWS Elastic MapReduce with Spark installed. 1 master and 2 workers, all
-    m3.xlarge instance:
-    Recommended command to run the program
-    for develop:
-    time sudo spark-submit --master yarn-cluster mf.py\
-            --conf spark.python.profile=true\
-            --conf "spark.driver.extraJavaOptions=-XX:+UseCompressedOops"\
-            --conf spark.shuffle.manager=hash\
-            --driver-memory 2g\
-            --driver-cores 1\
-            --num-executors 8\
-            --executor-cores 1\
-            --executor-memory 4778m\
-            --conf yarn.nodemanager.resource.memory-mb=14336\
-            --conf yarn.nodemanager.resource.cpu-vcores=3
-
-    for product:
-    sudo spark-submit --master yarn-cluster mf.py --conf spark.executor.memory=1920m --conf "spark.driver.extraJavaOptions=-XX:+UseCompressedOops" --conf spark.shuffle.manager=hash
-
-    Basic command, use following command to start the program.
-    sudo spark-submit --master MASTER mf.py
+    On a machine/cluster with Spark installed.
+    Use following command to start the program.
+    ./bin/pyspark --master MASTER --py-files mf.py
     where MASTER set to 'local[*]' for local debug, set to 'yarn' for client or cluster mode
     for more info on this setting, see: http://spark.apache.org/docs/latest/submitting-applications.html
-
-    other optional configuration flag:
-    # runtime env
-    --driver-memory 2g
-    --driver-cores 1
-    --num-executors 8
-    --executor-cores 1
-    --executor-memory 4778m
-
-    --conf "spark.driver.extraJavaOptions=-XX:+UseCompressedOops"
-    --conf spark.python.profile=true
-    --conf spark.python.worker.memory=512m
-    --conf spark.reducer.maxSizeInFlight=48m
-    # shuffle
-    --conf spark.shuffle.compress=true
-    --conf spark.shuffle.file.buffer=32k
-    --conf spark.shuffle.manager=hash #sort or hash
-    # ui
-    --conf spark.ui.port=4040 #default 4040
-    # compress and serialize
-    --conf spark.broadcast.compress=true
-    # memory
-    --conf spark.memory.fraction=0.75
-    --conf spark.memory.storageFraction=0.5
-    # execution behavior
-    --conf spark.broadcast.blockSize=4m
-    --conf spark.default.parallelism=8
-    # network
-    --conf spark.akka.threads=4
-
-    # yarn
-    --conf yarn.nodemanager.resource.memory-mb=14336
-    --conf yarn.nodemanager.resource.cpu-vcores=3
-
 
     Optimization guide:
 
@@ -275,67 +221,63 @@ def sdg_compute(target_value, total_list):
     CPU in your cluster. Normally, Spark tries to set the number of partitions automatically based on your
     cluster. However, you can also set it manually by passing it as a second parameter to parallelize 
     (e.g. sc.parallelize(data, 10)).
-
-    http://blog.cloudera.com/blog/2015/03/how-to-tune-your-apache-spark-jobs-part-1/
-    All shuffle data must be written to disk and then transferred over the network. repartition,
-    join, cogroup, and any of the *By or *ByKey transformations can result in shuffles
     '''
-conf = (SparkConf()
-.setAppName('matrix_factorization')
-#.set("spark.python.profile", "true") #TODO doesn't work
-.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer") #may help, not important for python: http://apache-spark-user-list.1001560.n3.nabble.com/using-Kryo-with-pyspark-td4229.html
-)
-sc = SparkContext(conf=conf)
+    conf = SparkConf().setAppName('matrix_factorization')
+    sc = SparkContext(conf=conf)
 
-# parameters
-K = 30 #int(sys.argv[2])
-N = 4 #int(sys.argv[3])
-eta = 0.001
-eta_decay = 0.99
-PARTITION_NUM = 2 * 4 * 2
+    # parameters
+    K = 30 #int(sys.argv[2])
+    N = 1 #int(sys.argv[3])
+    eta = 0.001
+    eta_decay = 0.99
+    PARTITION_NUM = 2 * 4 * 2
 
-fileName = 'ratings_1M.csv' #sys.argv[1]
-f = sc.textFile('hdfs:///input/%s' % fileName)
-
-max_block_id = (f
-# same key to send all lines to same place
-.map(lambda line:(0, (int(line.split(',')[0]), int(line.split(',')[1]))))
-# get maximum id
-.reduceByKey(lambda a,b: (max(a[0],b[0]), max(a[1],b[1])))
-)
-
-# e.g. (6040, 3952)
-max_block_id = max_block_id.first()[1]
-
-# x_block_dim, y_block_dim, K, N, eta
-constants_bc = sc.broadcast([(max_block_id[0]+N)/N, (max_block_id[1]+N)/N, K, N, eta, eta_decay]) 
-
-#(block_id, [(x_block_index, y_block_index rating_value)])
-target_value = (f
-.map(map_to_target_value)
-.persist()
-)
-#target_value_bc = sc.broadcast(target_value) #TODO broadcast a partitioned RDD may be not efficient
-
-# (block_id, ('dim-block_id(within each dimension)-block_index', array))
-# (0, ('x-0-0', array([ 0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0., 0.,  0.,  0.])))
-total_list = (sc
-.parallelize(initialize_matrix())
-.flatMap(map_to_block_id_row_data_list)
-)
-
-t1 = time.clock()
-for i in range(0, 10):
-    e, total_list = sdg_compute(target_value, total_list)
-    #e, total_list = sdg_compute(total_list)
-    eta = constants_bc.value[4]
-    eta_decay = constants_bc.value[5]
-    eta *= eta_decay
+    fileName = 'ratings_1M.csv' #sys.argv[1]
+    f = sc.textFile('hdfs:///input/%s' % fileName, PARTITION_NUM)
+    
+    max_block_id = (f
+    # same key to send all lines to same place
+    .map(lambda line:(0, (int(line.split(',')[0]), int(line.split(',')[1]))))
+    # get maximum id
+    .reduceByKey(lambda a,b: (max(a[0],b[0]), max(a[1],b[1])))
+    )
+    
+    # e.g. (6040, 3952)
+    max_block_id = max_block_id.collect()[0][1]
+    
+    # e.g. 16, 100
+    K = 30 #int(sys.argv[2])
+    N = 1 #int(sys.argv[3])
+    eta = 0.001
+    eta_decay = 0.99
+    
+    # x_block_dim, y_block_dim, K, N, eta
+    global constants_bc 
     constants_bc = sc.broadcast([(max_block_id[0]+N)/N, (max_block_id[1]+N)/N, K, N, eta, eta_decay]) 
-    e = e.first()
-    t2 = time.clock()
-    print '*' * 100
-    print (i, int(t2 - t1), e[1][0], np.sqrt(e[1][0]/ e[1][1]))
-    print '*' * 100
-    #sc.show_profiles()
+    
+    #(block_id, [(x_block_index, y_block_index rating_value)])
+    target_value = (f
+    .map(map_to_target_value)
+    .persist()
+    )
+    
+    # (block_id(global), ('dim-block_id(within each dimension)-block_index', array))
+    # (0, ('x-0-0', array([ 0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0., 0.,  0.,  0.])))
+    total_list = (sc
+    .parallelize(initialize_matrix())
+    .flatMap(map_to_block_id_row_data_list)
+    )
+    
+    t1 = time.clock()
+    for i in range(0, 10):
+        e, total_list = sdg_compute(target_value, total_list)
+        eta = constants_bc.value[4]
+        eta_decay = constants_bc.value[5]
+        eta *= eta_decay
+        constants_bc = sc.broadcast([(max_block_id[0]+N)/N, (max_block_id[1]+N)/N, K, N, eta, eta_decay]) 
+        e = e.first()
+        t2 = time.clock()
+        print '*' * 100
+        print (i, int(t2 - t1), e[1][0], np.sqrt(e[1][0]/ e[1][1]))
+        print '*' * 100
 
